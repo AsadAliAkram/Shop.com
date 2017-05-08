@@ -1,0 +1,316 @@
+<?php
+
+/**
+ * @file
+ * Defines settings, theme hooks, and forms to display QuickLook links/popups.
+ */
+
+/**
+ * Implements hook_help().
+ */
+function commerce_quicklook_help($path, $arg) {
+  switch ($path) {
+    case 'admin/help#commerce_quicklook':
+      return '<p>' . t('The Commerce QuickLook module adds a themable link to
+        desired products. This link allows customers to quickly preview the item
+        and potentially add it to their cart.')
+        . '</p>'
+        . '<p>' . t('To get started with adding a Commerce QuickLook link,
+        go to the configuration page. There you can select which
+        content types you\'d like the link to be displayed on, as well as other
+        settings like the link title and weight. If you\'d like to change what
+        is displayed for the QuickLook product display, go to that content
+        types Manage Display > QuickLook section
+        (found at \'admin/structure/types/manage/[content_type]/display/commerce_quicklook\').')
+        . '</p>';
+  }
+}
+
+/**
+ * Implements hook_menu().
+ *
+ * Define our URL.
+ */
+function commerce_quicklook_menu() {
+
+  $items = array();
+
+  $items['commerce/quicklook/%node'] = array(
+    'title' => 'QuickLook',
+    'page callback' => 'commerce_quicklook_js',
+    'page arguments' => array(2),
+    'file' => 'includes/commerce_quicklook.pages.inc',
+    'access callback' => 'entity_access',
+    'access arguments' => array('view', 'node', 2),
+  );
+
+  $items['admin/commerce/config/commerce_quicklook'] = array(
+    'title' => 'QuickLook Configuration',
+    'description' => 'Configure Commerce QuickLook.',
+    'access arguments' => array('administer site configuration'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('commerce_quicklook_settings'),
+  );
+
+  return $items;
+}
+
+/**
+ * Form constructor for the settings form.
+ */
+function commerce_quicklook_settings() {
+  $form = array();
+
+  $form['#validate'][] = 'commerce_quicklook_settings_form_validate';
+
+  $form['commerce_quicklook_label'] = array(
+    '#type' => 'textfield',
+    '#title' => t('QuickLook link label'),
+    '#description' => t('Text to display for all QuickLook links.'),
+    '#default_value' => variable_get('commerce_quicklook_label', 'Quick Look'),
+    '#size' => '40',
+    '#maxlength' => 64,
+    '#required' => TRUE,
+  );
+
+  $form['commerce_quicklook_weight'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Weight of these links'),
+    '#description' => t('Higher value means the link appears lower in the item.'),
+    '#default_value' => variable_get('commerce_quicklook_weight', 0),
+    '#size' => '10',
+    '#maxlength' => 8,
+    '#required' => TRUE,
+  );
+
+  // Make sure there is at least one content type created.
+  $node_types = node_type_get_types();
+  if (!empty($node_types)) {
+
+    $form['types_fieldset'] = array(
+      '#type' => 'fieldset',
+      '#title' => t('Content Types/View Mode Display Options'),
+      '#description' => t('Select which content types the links should be displayed on.'),
+      '#collapsible' => TRUE,
+      '#collapsed' => TRUE,
+    );
+
+    // Add checkboxes and drop-downs for every content type.
+    foreach ($node_types as $key => $node_type) {
+
+      $form['types_fieldset']['commerce_quicklook_node_' . $key] = array(
+        '#type' => 'checkbox',
+        '#title' => $node_type->name,
+        '#default_value' => variable_get('commerce_quicklook_node_' . $key, 0),
+      );
+
+      // Add default view mode to list (may be overridden by 'full' view mode).
+      $options = array();
+      $options['full'] = 'full (default)';
+
+      // Get all view modes and format for use as array.
+      $view_mode_settings = field_view_mode_settings('node', $key);
+      foreach ($view_mode_settings as $view_mode => $settings) {
+        // Do not allow users to display the link to itself.
+        if ($view_mode != 'commerce_quicklook') {
+          $options[$view_mode] = $view_mode;
+        }
+      }
+
+      $form['types_fieldset']['view_modes_fieldset_' . $key] = array(
+        '#type' => 'fieldset',
+        '#title' => $node_type->name,
+        '#collapsible' => TRUE,
+        '#collapsed' => TRUE,
+        '#states' => array(
+          'visible' => array(
+            ':input[name="commerce_quicklook_node_' . $key . '"]' => array('checked' => TRUE),
+          ),
+        ),
+      );
+
+      $form['types_fieldset']['view_modes_fieldset_' . $key]['commerce_quicklook_view_modes_' . $key] = array(
+        '#type' => 'checkboxes',
+        '#options' => $options,
+        '#description' => t('Select which view modes the links should be displayed on.'),
+        '#default_value' => variable_get('commerce_quicklook_view_modes_' . $key, array()),
+      );
+    }
+  }
+  else {
+    $form['commerce_quicklook_node_types'] = array(
+      '#type' => 'markup',
+      '#markup' => t('Create a content type to get started.'),
+    );
+  }
+
+  return system_settings_form($form);
+}
+
+/**
+ * Settings form validation handler.
+ */
+function commerce_quicklook_settings_form_validate($form, &$form_state) {
+  if (!is_numeric($form_state['values']['commerce_quicklook_weight'])) {
+    form_set_error('commerce_quicklook_weight', t('Weight of these links must be a number.'));
+  }
+}
+
+/**
+ * Implements hook_theme().
+ */
+function commerce_quicklook_theme() {
+  return array(
+    'commerce_quicklook_links' => array(
+      'template' => 'templates/commerce-quicklook-links',
+      'render element' => 'link',
+    ),
+  );
+}
+
+/**
+ * Implements hook_node_view().
+ */
+function commerce_quicklook_node_view($node, $view_mode, $langcode) {
+
+  // Check if we should add link to specific node type.
+  $node_type_selected = variable_get('commerce_quicklook_node_' . $node->type, array());
+
+  // Never display QuickLook link on a QuickLook view mode.
+  if ($view_mode != 'commerce_quicklook') {
+
+    // Only display for selected content types.
+    if (isset($node_type_selected) && $node_type_selected == 1) {
+
+      // Get all selected view modes.
+      $view_modes = variable_get('commerce_quicklook_view_modes_' . $node->type, array());
+      if (isset($view_modes)) {
+
+        // Check if the link should be shown on the given view mode.
+        if (isset($view_modes[$view_mode]) && strcmp($view_mode, $view_modes[$view_mode]) == 0) {
+
+          $label = variable_get('commerce_quicklook_label', 'QuickLook');
+
+          // Add QuickLook link to content so it can be rendered.
+          $node->content['commerce_quicklook_links'] = array(
+            '#theme' => 'commerce_quicklook_links',
+            '#weight' => variable_get('commerce_quicklook_weight', 0),
+            '#attached' => array(
+              'library' => array(
+                array('system', 'drupal.ajax'),
+                array('magnific_popup', 'magnific_popup'),
+              ),
+              'js' => array(
+                drupal_get_path('module', 'commerce_quicklook') . '/js/commerce_quicklook.js',
+              ),
+              'css' => array(
+                drupal_get_path('module', 'commerce_quicklook') . '/css/commerce_quicklook.css',
+              ),
+            ),
+            'link' => array(
+              'title' => $label,
+              'href' => '/commerce/quicklook/' . $node->nid,
+              'type' => $node->type,
+              'attributes' => array(
+                'title' => $label,
+                'class' => array('use-ajax', 'quicklook-link'),
+              ),
+            ),
+          );
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Implements template_preprocess_HOOK().
+ */
+function template_preprocess_commerce_quicklook_links(&$variables) {
+
+  // Suggest content type specific template themes.
+  if (isset($variables['link']['link']['type'])) {
+    $variables['theme_hook_suggestions'][] = $variables['theme_hook_original'] . '__' . $variables['link']['link']['type'];
+  }
+
+  // Nicely format some useful variables.
+  $variables['link_title'] = check_plain($variables['link']['link']['title']);
+  $variables['link_url'] = check_url($variables['link']['link']['href']);
+  $variables['link_attributes'] = drupal_attributes($variables['link']['link']['attributes']);
+}
+
+/**
+ * Implements hook_entity_info_alter().
+ *
+ * Add the QuickLook node display.
+ */
+function commerce_quicklook_entity_info_alter(&$entity_info) {
+  $entity_info['node']['view modes']['commerce_quicklook'] = array(
+    'label' => t('QuickLook'),
+    'custom settings' => TRUE,
+  );
+}
+
+/**
+ * Implements hook_commerce_cart_attributes_refresh_alter().
+ *
+ * Add a specific selector to all ajax commands to uniquely identify the Quick
+ * Look form from others. This prevents background elements from being replaced.
+ */
+function commerce_quicklook_commerce_cart_attributes_refresh_alter(&$commands, $form, $form_state) {
+
+  // Check if the form is a QuickLook form.
+  if (isset($form_state['context']['display']) && $form_state['context']['display'] == 'commerce_quicklook') {
+
+    // Wrapper class to uniquely identify QuickLook elements from others.
+    $form_wrapper_class = 'product-quick-view-popup';
+
+    // Loop through all commands and add appropriate id tag to selector to
+    // prevent the form from replacing other elements.
+    foreach ($commands as $key => $command) {
+      $commands[$key]['selector'] = '.' . $form_wrapper_class . ' ' . $command['selector'];
+    }
+  }
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ *
+ * Alter the 'Add to cart' form to change its default submission handlers.
+ * This prevents the page from incorrectly reloading.
+ */
+function commerce_quicklook_form_commerce_cart_add_to_cart_form_alter(&$form, &$form_state) {
+  // Check if the form is a QuickLook form.
+  if (isset($form_state['context']['display']) && $form_state['context']['display'] == 'commerce_quicklook') {
+
+    // Edit existing submit callback to use ajax.
+    $form['submit']['#ajax'] = array(
+      'callback' => 'commerce_quicklook_add_cart_submit_js',
+      'method' => 'replace',
+    );
+
+    $form['#submit'][] = 'commerce_quicklook_form_rebuild';
+  }
+}
+
+/**
+ * Ajax submit callback.
+ *
+ * Reload the QuickLook add to cart form and display any status messages.
+ */
+function commerce_quicklook_add_cart_submit_js($form, &$form_state) {
+  $commands[] = ajax_command_replace('.product-quick-view-popup .' . drupal_html_class($form['#form_id']), drupal_render($form));
+  $commands[] = ajax_command_prepend('.product-quick-view-popup .' . drupal_html_class($form['#form_id']), theme('status_messages'));
+  return array('#type' => 'ajax', '#commands' => $commands);
+}
+
+/**
+ * Form submit callback.
+ *
+ * Force rebuild on the QuickLook add to cart form.
+ */
+function commerce_quicklook_form_rebuild($form, &$form_state) {
+  $form_state['rebuild'] = TRUE;
+
+  drupal_set_message(t('Product successfully added to your cart'), 'status');
+}

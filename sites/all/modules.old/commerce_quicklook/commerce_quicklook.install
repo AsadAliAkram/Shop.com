@@ -1,0 +1,16 @@
+<?php
+
+/**
+ * @file
+ * Install/Uninstall code for Commerce QuickLook.
+ */
+
+/**
+ * Implements hook_uninstall().
+ */
+function commerce_quicklook_uninstall() {
+  db_delete('variable')
+    ->condition('name', 'commerce_quicklook_%', 'LIKE')
+    ->execute();
+  cache_clear_all('variables', 'cache_bootstrap');
+}

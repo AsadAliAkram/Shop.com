@@ -1,0 +1,176 @@
+<?php
+
+/**
+ * @file
+ * Unit tests for the Commerce QuickLook module.
+ */
+
+/**
+ * Class CommerceQuickLookTestCase.
+ */
+class CommerceQuickLookTestCase extends DrupalWebTestCase {
+
+  protected $privilegedUser;
+  protected $normalUser;
+
+  /**
+   * Set Commerce QuickLook test information.
+   */
+  public static function getInfo() {
+    return array(
+      'name' => 'Commerce QuickLook',
+      'description' => 'Test Commerce QuickLook link and preview functionality.',
+      'group' => 'Drupal Commerce',
+    );
+  }
+
+  /**
+   * Setup initial required modules and users.
+   */
+  public function setUp() {
+
+    // Make sure we are using the testing profile.
+    $this->profile = 'testing';
+
+    parent::setUp(array('commerce_quicklook'));
+
+    $this->privilegedUser = $this->drupalCreateUser(array(
+      'administer site configuration',
+    ));
+
+    $this->normalUser = $this->drupalCreateUser();
+  }
+
+  /**
+   * Ensure only users with admin rights can access configuration page.
+   */
+  public function testCommerceQuickLookPermissions() {
+
+    // Test privileged user permissions.
+    $this->drupalLogin($this->privilegedUser);
+    $this->drupalGet('admin/commerce/config/commerce_quicklook');
+    $this->assertResponse('200', 'Privileged user was able to correctly access the admin page.');
+
+    // Test normal user permissions.
+    $this->drupalLogin($this->normalUser);
+    $this->drupalGet('admin/commerce/config/commerce_quicklook');
+    $this->assertResponse('403', 'Unprivileged user was unable to access the admin page.');
+  }
+
+  /**
+   * Ensure the QuickLook link appears on selected content types/view modes.
+   */
+  public function testCommerceQuickLookLink() {
+    $this->drupalLogin($this->privilegedUser);
+
+    // Add a Page content type.
+    $this->drupalCreateContentType(array('type' => 'page', 'name' => 'Page'));
+
+    // Add a Page.
+    $this->drupalCreateNode(array('type' => 'page'));
+
+    // Ensure no link is on the page.
+    $this->drupalGet('node/1');
+    $this->assertNoLink('Quick Look', 'When displaying to no view modes, didn\'t find the QuickLook link on page.');
+
+    // Select Page as a displayed content type in configuration.
+    $edit = array(
+      'commerce_quicklook_node_page' => TRUE,
+    );
+    $this->drupalPost('admin/commerce/config/commerce_quicklook', $edit, t('Save configuration'));
+
+    // Ensure no link is on the page.
+    $this->drupalGet('node/1');
+    $this->assertNoLink('Quick Look', 'With no view mode selected, didn\'t find the QuickLook link on page.');
+
+    // Select only to display on Teaser view mode.
+    $edit = array(
+      'commerce_quicklook_view_modes_page[teaser]' => TRUE,
+    );
+    $this->drupalPost('admin/commerce/config/commerce_quicklook', $edit, t('Save configuration'));
+
+    // Ensure the link isn't on the page as its not a Teaser view.
+    $this->drupalGet('node/1');
+    $this->assertNoLink('Quick Look', 'When displaying to teaser view mode, didn\'t find QuickLook link on page.');
+
+    // Select only to display on Full (default) view mode.
+    $edit = array(
+      'commerce_quicklook_view_modes_page[full]' => TRUE,
+    );
+    $this->drupalPost('admin/commerce/config/commerce_quicklook', $edit, t('Save configuration'));
+
+    // Ensure the link is on the page.
+    $this->drupalGet('node/1');
+    $this->assertLink('Quick Look', 0, 'When displaying to full view mode, found the QuickLook link on page.');
+  }
+
+  /**
+   * Ensure the QuickLook label setting sets the label of the link.
+   */
+  public function testCommerceQuickLookLabel() {
+    $this->drupalLogin($this->privilegedUser);
+
+    // Add a Page content type.
+    $this->drupalCreateContentType(array('type' => 'page', 'name' => 'Page'));
+
+    // Add a Page.
+    $this->drupalCreateNode(array('type' => 'page'));
+
+    // Change Label to 'Test Label'.
+    $edit = array(
+      'commerce_quicklook_label' => 'Test Label',
+      'commerce_quicklook_node_page' => TRUE,
+      'commerce_quicklook_view_modes_page[full]' => TRUE,
+    );
+    $this->drupalPost('admin/commerce/config/commerce_quicklook', $edit, t('Save configuration'));
+
+    // Ensure the link label has changed on the page.
+    $this->drupalGet('node/1');
+    $this->assertLink('Test Label', 0, 'Found Test Label link on page.');
+  }
+
+  /**
+   * Ensure the QuickLook link has the correct href.
+   */
+  public function testCommerceQuickLookPopup() {
+    $this->drupalLogin($this->privilegedUser);
+
+    // Add a Page content type.
+    $this->drupalCreateContentType(array('type' => 'page', 'name' => 'Page'));
+
+    // Add a Page.
+    $this->drupalCreateNode(array('type' => 'page'));
+
+    // Select Page as a displayed content type in configuration.
+    $edit = array(
+      'commerce_quicklook_node_page' => TRUE,
+      'commerce_quicklook_view_modes_page[full]' => TRUE,
+    );
+    $this->drupalPost('admin/commerce/config/commerce_quicklook', $edit, t('Save configuration'));
+
+    // Ensure the QuickLook link points to correct url.
+    $this->drupalGet('node/1');
+    $this->assertLinkByHref('commerce/quicklook/1', 0, 'QuickLook link points to correct url.');
+
+    // Ensure the QuickLook link has the required use-ajax class.
+    $this->assertFieldByXPath('//a[contains(concat(" ", normalize-space(@class), " "), " quicklook-link ") and contains(concat(" ", normalize-space(@class), " "), " use-ajax ")]', NULL, 'QuickLook link has required use-ajax class.');
+  }
+
+  /**
+   * Ensure the QuickLook url is registered.
+   */
+  public function testCommerceQuickLookUrl() {
+    $this->drupalLogin($this->normalUser);
+
+    // Add a Page content type.
+    $this->drupalCreateContentType(array('type' => 'page', 'name' => 'Page'));
+
+    // Add a Page.
+    $this->drupalCreateNode(array('type' => 'page'));
+
+    // Ensure the QuickLook url commerce/quicklook/%node returns information.
+    $this->drupalGet('commerce/quicklook/1');
+    $this->assertResponse('200', 'QuickLook url successfully returned information.');
+  }
+
+}
